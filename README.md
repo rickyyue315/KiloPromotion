@@ -51,6 +51,8 @@ This is a Streamlit-based retail promotion target viewing and dispatch suggestio
 - `Safety Stock` (int) - 安全庫存數量
 - `Last Month Sold Qty` (int) - 上月銷量
 - `MTD Sold Qty` (int) - 本月至今銷量
+- `Supply source` (str) - 補貨來源（1、2、4等代碼）
+- `Description p. group` (str) - Buyer（買家組別描述）
 
 **檔案B - 推廣目標數據 (Promotion Target Data)**
 **Sheet 1:**
@@ -93,6 +95,16 @@ Daily Sales Rate = (Last Month Sold Qty / 30 + MTD Sold Qty / 本月天數) / 2
 ```
 淨需求 = 總需求 - (SaSa Net Stock + Pending Received) + Safety Stock
 ```
+
+#### 缺貨數量計算
+```
+缺貨數量 = max(0, 淨需求 - SaSa Net Stock - Pending Received)
+```
+
+#### 條件性通知與建議
+- **Supply source 1 或 4**: 生成缺貨通知給Buyer，記錄至Notes欄位
+- **Supply source 2**: 生成RP team建議，對照D001庫存進行補貨
+- **其他Supply source**: 僅記錄標準Notes
 
 #### 派貨建議
 - 若RP Type為RF：建議派貨量 = max(淨需求, MOQ)

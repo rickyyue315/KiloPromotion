@@ -66,7 +66,7 @@ def load_file_a(file):
         required_columns = [
             'Article', 'Article Description', 'RP Type', 'Site', 'MOQ',
             'SaSa Net Stock', 'Pending Received', 'Safety Stock',
-            'Last Month Sold Qty', 'MTD Sold Qty'
+            'Last Month Sold Qty', 'MTD Sold Qty', 'Supply source', 'Description p. group'
         ]
         
         missing_columns = [col for col in required_columns if col not in df.columns]
@@ -79,6 +79,8 @@ def load_file_a(file):
         df['Article Description'] = df['Article Description'].astype(str).str.strip()
         df['RP Type'] = df['RP Type'].astype(str).str.strip()
         df['Site'] = df['Site'].astype(str).str.strip()
+        df['Supply source'] = df['Supply source'].astype(str).str.strip()
+        df['Description p. group'] = df['Description p. group'].astype(str).str.strip()
         
         # Convert numeric columns, fill NaN with 0, and handle negative values
         numeric_columns = ['MOQ', 'SaSa Net Stock', 'Pending Received', 
@@ -102,6 +104,11 @@ def load_file_a(file):
                 notes.append("Sales quantity outlier adjusted")
                 df.at[idx, 'Last Month Sold Qty'] = min(row['Last Month Sold Qty'], 100000)
                 df.at[idx, 'MTD Sold Qty'] = min(row['MTD Sold Qty'], 100000)
+            
+            # Validate Supply source
+            if row['Supply source'] not in ['1', '2', '4', '']:
+                notes.append(f"Invalid supply source: {row['Supply source']}")
+                df.at[idx, 'Supply source'] = "無效來源"
             
             if notes:
                 df.at[idx, 'Notes'] = "; ".join(notes)
@@ -212,14 +219,14 @@ def calculate_daily_sales_rate(last_month_sold, mtd_sold, current_day=None):
         return current_month_daily
 
 def calculate_demand_and_dispatch(merged_df, lead_time=2.5):
-    """Calculate demand and dispatch suggestions"""
+    """Calculate demand and dispatch suggestions with out-of-stock handling"""
     try:
         # Make a copy to avoid modifying the original
         result_df = merged_df.copy()
         
         # Calculate daily sales rate
         result_df['Daily Sales Rate'] = result_df.apply(
-            lambda row: calculate_daily_sales_rate(row['Last Month Sold Qty'], row['MTD Sold Qty']), 
+            lambda row: calculate_daily_sales_rate(row['Last Month Sold Qty'], row['MTD Sold Qty']),
             axis=1
         )
         
@@ -228,17 +235,23 @@ def calculate_demand_and_dispatch(merged_df, lead_time=2.5):
             lambda row: (
                 row['Daily Sales Rate'] * (row['Promotion Days'] + row['Target Cover Days'] + lead_time) +  # Regular demand
                 row['SKU Target'] * (1 if row['Target Type'] == 'HK' else 1 if row['Target Type'] == 'MO' else 2) +  # Promotion demand
-                (row['Shop Target(HK)'] if row['Target Type'] == 'HK' else 
-                row['Shop Target(MO)'] if row['Target Type'] == 'MO' else 
+                (row['Shop Target(HK)'] if row['Target Type'] == 'HK' else
+                row['Shop Target(MO)'] if row['Target Type'] == 'MO' else
                 row['Shop Target(ALL)'])
-            ), 
+            ),
             axis=1
         )
         
         # Calculate net demand
         result_df['Net Demand'] = result_df.apply(
             lambda row: max(0, row['Total Demand'] - (row['SaSa Net Stock'] + row['Pending Received']) + row['Safety Stock']
-            ), 
+            ),
+            axis=1
+        )
+        
+        # Calculate out-of-stock quantity
+        result_df['Out of Stock Qty'] = result_df.apply(
+            lambda row: max(0, row['Net Demand'] - row['SaSa Net Stock'] - row['Pending Received']),
             axis=1
         )
         
@@ -246,11 +259,11 @@ def calculate_demand_and_dispatch(merged_df, lead_time=2.5):
         result_df['Suggested Dispatch Qty'] = result_df.apply(
             lambda row: (
                 max(row['Net Demand'], row['MOQ']) if row['RP Type'] == 'RF' else 0
-        ), 
+        ),
             axis=1
         )
         
-        # Add calculation notes
+        # Add calculation notes and conditional notifications
         for idx, row in result_df.iterrows():
             current_notes = row['Notes'] if pd.notna(row['Notes']) else ""
             if current_notes:
@@ -263,6 +276,15 @@ def calculate_demand_and_dispatch(merged_df, lead_time=2.5):
             if row['Net Demand'] < row['MOQ'] and row['Net Demand'] > 0:
                 calculation_notes.append(f"Net demand below MOQ, suggested: {row['Suggested Dispatch Qty']}")
             
+            # Conditional notifications based on supply source
+            if row['Out of Stock Qty'] > 0:
+                if row['Supply source'] in ['1', '4']:
+                    buyer_note = f"缺貨通知：Buyer {row['Description p. group']}，缺貨數量 {row['Out of Stock Qty']}"
+                    calculation_notes.append(buyer_note)
+                elif row['Supply source'] == '2':
+                    rp_note = f"RP team建議：對照D001庫存進行補貨，缺貨數量 {row['Out of Stock Qty']}"
+                    calculation_notes.append(rp_note)
+            
             result_df.at[idx, 'Notes'] = current_notes + "; ".join(calculation_notes)
         
         return result_df
@@ -273,19 +295,26 @@ def calculate_demand_and_dispatch(merged_df, lead_time=2.5):
         return None
 
 def create_summary_table(result_df):
-    """Create summary table by Group No. and Site"""
+    """Create summary table by Group No., Site and Supply source"""
     try:
         if result_df.empty:
             return pd.DataFrame()
         
-        # Group by Group No. and Site
-        summary = result_df.groupby(['Group No.', 'Site']).agg({
+        # Group by Group No., Site and Supply source
+        summary = result_df.groupby(['Group No.', 'Site', 'Supply source']).agg({
             'Total Demand': 'sum',
             'SaSa Net Stock': 'sum',
             'Pending Received': 'sum',
             'Safety Stock': 'sum',
+            'Out of Stock Qty': 'sum',
             'Suggested Dispatch Qty': 'sum'
         }).reset_index()
+        
+        # Add notification summary column
+        summary['Notification Summary'] = summary.apply(
+            lambda row: create_notification_summary(row),
+            axis=1
+        )
         
         return summary
     
@@ -293,6 +322,18 @@ def create_summary_table(result_df):
         st.error(f"Error creating summary table: {str(e)}")
         logger.error(f"Error creating summary table: {str(e)}")
         return pd.DataFrame()
+
+def create_notification_summary(row):
+    """Create notification summary for each row in summary table"""
+    notifications = []
+    
+    if row['Out of Stock Qty'] > 0:
+        if row['Supply source'] in ['1', '4']:
+            notifications.append(f"缺貨通知: {row['Out of Stock Qty']} units")
+        elif row['Supply source'] == '2':
+            notifications.append(f"RP建議: {row['Out of Stock Qty']} units (檢查D001)")
+    
+    return "; ".join(notifications) if notifications else "無"
 
 def create_visualizations(result_df, summary_df):
     """Create visualizations for the analysis results"""
@@ -337,7 +378,36 @@ def create_visualizations(result_df, summary_df):
         ax3.set_title('Dispatch Suggestion Distribution (RF vs ND)')
         st.pyplot(fig2)
         
-        # Visualization 3: Heatmap - Net Demand by Site and Article
+        # Visualization 3: Out-of-Stock Analysis by Supply Source
+        if 'Out of Stock Qty' in result_df.columns:
+            fig3, (ax4, ax5) = plt.subplots(1, 2, figsize=(15, 6))
+            
+            # Chart 3a: Out-of-Stock by Supply Source
+            out_of_stock_by_source = result_df.groupby('Supply source')['Out of Stock Qty'].sum()
+            ax4.bar(range(len(out_of_stock_by_source)), out_of_stock_by_source.values)
+            ax4.set_title('Out-of-Stock Quantity by Supply Source')
+            ax4.set_xlabel('Supply Source')
+            ax4.set_ylabel('Out-of-Stock Quantity')
+            ax4.set_xticks(range(len(out_of_stock_by_source)))
+            ax4.set_xticklabels(out_of_stock_by_source.index, rotation=45)
+            
+            # Chart 3b: Out-of-Stock vs Available Stock
+            stock_comparison = result_df.groupby('Group No.')[['SaSa Net Stock', 'Out of Stock Qty']].sum()
+            x = range(len(stock_comparison))
+            width = 0.35
+            ax5.bar([i - width/2 for i in x], stock_comparison['SaSa Net Stock'], width, label='Available Stock')
+            ax5.bar([i + width/2 for i in x], stock_comparison['Out of Stock Qty'], width, label='Out-of-Stock')
+            ax5.set_title('Available Stock vs Out-of-Stock by Group')
+            ax5.set_xlabel('Group No.')
+            ax5.set_ylabel('Quantity')
+            ax5.set_xticks(x)
+            ax5.set_xticklabels(stock_comparison.index, rotation=45)
+            ax5.legend()
+            
+            plt.tight_layout()
+            st.pyplot(fig3)
+        
+        # Visualization 4: Heatmap - Net Demand by Site and Article
         if len(result_df) > 0:
             # Sample data if too large for heatmap
             if len(result_df) > 1000:
@@ -354,10 +424,10 @@ def create_visualizations(result_df, summary_df):
             ).fillna(0)
             
             if not pivot_data.empty:
-                fig3, ax4 = plt.subplots(figsize=(12, 8))
-                sns.heatmap(pivot_data, cmap='viridis', ax=ax4)
-                ax4.set_title('Net Demand Heatmap (Site vs Article)')
-                st.pyplot(fig3)
+                fig4, ax6 = plt.subplots(figsize=(12, 8))
+                sns.heatmap(pivot_data, cmap='viridis', ax=ax6)
+                ax6.set_title('Net Demand Heatmap (Site vs Article)')
+                st.pyplot(fig4)
     
     except Exception as e:
         st.error(f"Error creating visualizations: {str(e)}")
@@ -478,6 +548,34 @@ def main():
     # Display results
     if st.session_state.analysis_complete:
         st.subheader("📋 分析結果")
+        
+        # Display out-of-stock notifications
+        if 'Out of Stock Qty' in st.session_state.result_data.columns:
+            out_of_stock_data = st.session_state.result_data[
+                (st.session_state.result_data['Out of Stock Qty'] > 0) &
+                (st.session_state.result_data['Supply source'].isin(['1', '2', '4']))
+            ]
+            
+            if not out_of_stock_data.empty:
+                st.subheader("⚠️ 缺貨通知與建議")
+                
+                # Buyer notifications (Supply source 1, 4)
+                buyer_notifications = out_of_stock_data[
+                    out_of_stock_data['Supply source'].isin(['1', '4'])
+                ]
+                if not buyer_notifications.empty:
+                    st.warning("**Buyer 缺貨通知:**")
+                    for idx, row in buyer_notifications.iterrows():
+                        st.write(f"- Article: {row['Article']}, Site: {row['Site']}, Buyer: {row['Description p. group']}, 缺貨數量: {row['Out of Stock Qty']}")
+                
+                # RP team suggestions (Supply source 2)
+                rp_suggestions = out_of_stock_data[
+                    out_of_stock_data['Supply source'] == '2'
+                ]
+                if not rp_suggestions.empty:
+                    st.info("**RP Team 補貨建議:**")
+                    for idx, row in rp_suggestions.iterrows():
+                        st.write(f"- Article: {row['Article']}, Site: {row['Site']}, 缺貨數量: {row['Out of Stock Qty']} (請檢查D001庫存)")
         
         # Detailed results
         st.write("**詳細計算結果:**")
