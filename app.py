@@ -185,11 +185,12 @@ def merge_data(file_a_df, file_b_sheet1, file_b_sheet2):
         
         # Add Notes for missing matches
         for idx, row in merged.iterrows():
+            current_notes = row['Notes'] if 'Notes' in row and pd.notna(row['Notes']) else ""
             if pd.isna(row['Group No.']) or row['Group No.'] == 0:
-                current_notes = row['Notes'] if 'Notes' in row and pd.notna(row['Notes']) else ""
-            if current_notes:
-                current_notes += "; "
-            merged.at[idx, 'Notes'] = current_notes + "No matching promotion target data"
+                if current_notes:
+                    current_notes += "; "
+                current_notes += "No matching promotion target data"
+                merged.at[idx, 'Notes'] = current_notes
         
         return merged
     
