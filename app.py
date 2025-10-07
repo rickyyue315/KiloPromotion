@@ -173,13 +173,39 @@ def load_file_b(file):
         return None, None
 
 def merge_data(file_a_df, file_b_sheet1, file_b_sheet2):
-    """Merge File A and File B data"""
+    """Merge File A and File B data using SKU-Site mapping"""
     try:
-        # Merge File A with Sheet 1 of File B on Article
-        merged = pd.merge(file_a_df, file_b_sheet1, on='Article', how='left')
+        # Create SKU-Site mapping from File B
+        # Create all combinations of SKU from Sheet 1 and Site from Sheet 2
+        sku_site_mapping = []
         
-        # Merge with Sheet 2 of File B on Site
-        merged = pd.merge(merged, file_b_sheet2, on='Site', how='left')
+        for _, sku_row in file_b_sheet1.iterrows():
+            for _, site_row in file_b_sheet2.iterrows():
+                mapping_entry = {
+                    'Article': sku_row['Article'],
+                    'Site': site_row['Site'],
+                    'Group No.': sku_row['Group No.'],
+                    'SKU Target': sku_row['SKU Target'],
+                    'Target Type': sku_row['Target Type'],
+                    'Promotion Days': sku_row['Promotion Days'],
+                    'Target Cover Days': sku_row['Target Cover Days'],
+                    'Shop Target(HK)': site_row['Shop Target(HK)'],
+                    'Shop Target(MO)': site_row['Shop Target(MO)'],
+                    'Shop Target(ALL)': site_row['Shop Target(ALL)']
+                }
+                sku_site_mapping.append(mapping_entry)
+        
+        # Create mapping DataFrame
+        mapping_df = pd.DataFrame(sku_site_mapping)
+        
+        # Merge File A with the mapping DataFrame on both Article and Site
+        merged = pd.merge(
+            file_a_df,
+            mapping_df,
+            on=['Article', 'Site'],
+            how='left',
+            suffixes=('', '_from_b')
+        )
         
         # Fill missing values from File B with 0
         file_b_columns = ['Group No.', 'SKU Target', 'Target Type', 'Promotion Days', 'Target Cover Days',
@@ -187,15 +213,20 @@ def merge_data(file_a_df, file_b_sheet1, file_b_sheet2):
         
         for col in file_b_columns:
             if col in merged.columns:
-                merged[col] = merged[col].fillna(0) if col in ['Group No.', 'Target Type'] else 0
+                if col in ['Group No.', 'Target Type']:
+                    # For string columns, fill with empty string instead of 0
+                    merged[col] = merged[col].fillna('')
+                else:
+                    # For numeric columns, fill with 0
+                    merged[col] = merged[col].fillna(0)
         
         # Add Notes for missing matches
         for idx, row in merged.iterrows():
             current_notes = row['Notes'] if 'Notes' in row and pd.notna(row['Notes']) else ""
-            if pd.isna(row['Group No.']) or row['Group No.'] == 0:
+            if pd.isna(row['Group No.']) or row['Group No.'] == '':
                 if current_notes:
                     current_notes += "; "
-                current_notes += "No matching promotion target data"
+                current_notes += f"No matching promotion target data for Article {row['Article']} at Site {row['Site']}"
                 merged.at[idx, 'Notes'] = current_notes
         
         return merged
