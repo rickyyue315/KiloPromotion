@@ -365,7 +365,9 @@ def create_visualizations(result_df, summary_df):
         ax1.set_xticklabels(group_demand.index, rotation=45)
         
         # Chart 2: Total Inventory by Group No.
-        group_inventory = result_df.groupby('Group No.')[['SaSa Net Stock', 'Pending Received', 'Safety Stock']].sum(axis=1).sort_values(ascending=False)
+        group_inventory = result_df.groupby('Group No.')[['SaSa Net Stock', 'Pending Received', 'Safety Stock']].sum()
+        group_inventory['Total Inventory'] = group_inventory.sum(axis=1)
+        group_inventory = group_inventory['Total Inventory'].sort_values(ascending=False)
         ax2.bar(range(len(group_inventory)), group_inventory.values)
         ax2.set_title('Total Inventory by Group No.')
         ax2.set_xlabel('Group No.')
