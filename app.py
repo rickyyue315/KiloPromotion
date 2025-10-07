@@ -268,16 +268,16 @@ def calculate_demand_and_dispatch(merged_df, lead_time=2.5):
             axis=1
         )
         
-        # Calculate total demand
+        # Calculate total demand and round up to nearest integer
         result_df['Total Demand'] = result_df.apply(
-            lambda row: (
+            lambda row: np.ceil(
                 row['Daily Sales Rate'] * (row['Promotion Days'] + row['Target Cover Days'] + lead_time) +  # Regular demand
                 row['SKU Target'] * (row['Shop Target(HK)'] if row['Target Type'] == 'HK' else
                                      row['Shop Target(MO)'] if row['Target Type'] == 'MO' else
                                      row['Shop Target(ALL)'])  # Site target = SKU Target * Shop Target Percentage
             ),
             axis=1
-        )
+        ).astype(int)
         
         # Calculate net demand
         result_df['Net Demand'] = result_df.apply(
