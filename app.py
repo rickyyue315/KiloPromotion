@@ -152,12 +152,18 @@ def load_file_b(file):
         for col in numeric_sheet1:
             sheet1_df[col] = pd.to_numeric(sheet1_df[col], errors='coerce').fillna(0).astype(int)
         
-        # Preprocess Sheet 2
+        # Preprocess Sheet 2 - Handle percentages
         sheet2_df['Site'] = sheet2_df['Site'].astype(str).str.strip()
         
-        numeric_sheet2 = ['Shop Target(HK)', 'Shop Target(MO)', 'Shop Target(ALL)']
-        for col in numeric_sheet2:
-            sheet2_df[col] = pd.to_numeric(sheet2_df[col], errors='coerce').fillna(0).astype(int)
+        # Convert percentage columns to float and handle percentage values
+        percentage_columns = ['Shop Target(HK)', 'Shop Target(MO)', 'Shop Target(ALL)']
+        for col in percentage_columns:
+            # Convert to numeric, handling both percentage strings and numbers
+            sheet2_df[col] = pd.to_numeric(sheet2_df[col], errors='coerce').fillna(0)
+            
+            # If values are greater than 1, assume they are percentages (e.g., 10 for 10%) and convert to decimal
+            if (sheet2_df[col] > 1).any():
+                sheet2_df[col] = sheet2_df[col] / 100
         
         return sheet1_df, sheet2_df
     
@@ -235,10 +241,10 @@ def calculate_demand_and_dispatch(merged_df, lead_time=2.5):
         result_df['Total Demand'] = result_df.apply(
             lambda row: (
                 row['Daily Sales Rate'] * (row['Promotion Days'] + row['Target Cover Days'] + lead_time) +  # Regular demand
-                row['SKU Target'] * (1 if row['Target Type'] == 'HK' else 1 if row['Target Type'] == 'MO' else 2) +  # Promotion demand
-                (row['Shop Target(HK)'] if row['Target Type'] == 'HK' else
-                row['Shop Target(MO)'] if row['Target Type'] == 'MO' else
-                row['Shop Target(ALL)'])
+                row['SKU Target'] * (1 if row['Target Type'] == 'HK' else 1 if row['Target Type'] == 'MO' else 2) *  # Base promotion demand
+                (1 + (row['Shop Target(HK)'] if row['Target Type'] == 'HK' else
+                      row['Shop Target(MO)'] if row['Target Type'] == 'MO' else
+                      row['Shop Target(ALL)']))  # Apply shop target as percentage multiplier
             ),
             axis=1
         )
