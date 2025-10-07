@@ -88,7 +88,7 @@ Daily Sales Rate = (Last Month Sold Qty / 30 + MTD Sold Qty / 本月天數) / 2
 ```
 總需求 = 日常銷售需求 + 推廣特定需求
 日常銷售需求 = Daily Sales Rate * (Promotion Days + Target Cover Days + Lead Time)
-推廣特定需求 = SKU Target * (Target Type調整係數) + Shop Target(對應類型)
+推廣特定需求 = SKU Target * Shop Target(對應類型)
 ```
 
 #### 淨需求計算

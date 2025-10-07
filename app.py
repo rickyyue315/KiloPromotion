@@ -241,10 +241,9 @@ def calculate_demand_and_dispatch(merged_df, lead_time=2.5):
         result_df['Total Demand'] = result_df.apply(
             lambda row: (
                 row['Daily Sales Rate'] * (row['Promotion Days'] + row['Target Cover Days'] + lead_time) +  # Regular demand
-                row['SKU Target'] * (1 if row['Target Type'] == 'HK' else 1 if row['Target Type'] == 'MO' else 2) *  # Base promotion demand
-                (1 + (row['Shop Target(HK)'] if row['Target Type'] == 'HK' else
-                      row['Shop Target(MO)'] if row['Target Type'] == 'MO' else
-                      row['Shop Target(ALL)']))  # Apply shop target as percentage multiplier
+                row['SKU Target'] * (row['Shop Target(HK)'] if row['Target Type'] == 'HK' else
+                                     row['Shop Target(MO)'] if row['Target Type'] == 'MO' else
+                                     row['Shop Target(ALL)'])  # Site target = SKU Target * Shop Target Percentage
             ),
             axis=1
         )
